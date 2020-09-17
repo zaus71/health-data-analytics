@@ -5,6 +5,7 @@ public class StatisticalCorrelationReportDefinition {
 	private CohortCriteria baseCriteria;
 	private EncounterCriterion treatmentCriterion;
 	private EncounterCriterion negativeOutcomeCriterion;
+	private boolean usePathlingAPI;
 
 	public StatisticalCorrelationReportDefinition() {
 	}
@@ -25,5 +26,9 @@ public class StatisticalCorrelationReportDefinition {
 
 	public EncounterCriterion getNegativeOutcomeCriterion() {
 		return negativeOutcomeCriterion;
+	}
+
+	public boolean isUsePathlingAPI() {
+		return usePathlingAPI;
 	}
 }

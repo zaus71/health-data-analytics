@@ -3,6 +3,9 @@ package org.snomed.heathanalytics.server.service;
 import org.slf4j.LoggerFactory;
 import org.snomed.heathanalytics.model.Patient;
 import org.snomed.heathanalytics.server.model.*;
+import org.snomed.heathanalytics.server.service.pathlingclient.AggregateResponse;
+import org.snomed.heathanalytics.server.service.pathlingclient.PathlingClient;
+import org.snomed.heathanalytics.server.service.pathlingclient.AggregateRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
@@ -15,6 +18,9 @@ public class ReportService {
 
 	@Autowired
 	private QueryService queryService;
+
+	@Autowired
+	private PathlingClient pathlingClient;
 
 	public Report runReport(ReportDefinition reportDefinition) throws ServiceException {
 		Timer timer = new Timer();
@@ -37,46 +43,85 @@ public class ReportService {
 	}
 
 	public StatisticalCorrelationReport runStatisticalReport(StatisticalCorrelationReportDefinition reportDefinition) throws ServiceException {
-		CohortCriteria patientCriteria = new CohortCriteria();
 
-		// Copy base criteria
-		patientCriteria.copyCriteriaWhereMoreSpecific(reportDefinition.getBaseCriteria());
+		if (reportDefinition.isUsePathlingAPI()) {
+			// Call the Pathling API
 
-		EncounterCriterion treatmentCriterion = reportDefinition.getTreatmentCriterion();
-		InputValidationHelper.checkInput("treatmentCriterion is required for the statistical test.", treatmentCriterion != null);
-		EncounterCriterion negativeOutcomeCriterion = reportDefinition.getNegativeOutcomeCriterion();
-		InputValidationHelper.checkInput("negativeOutcomeCriterion is required for a statistical test.", negativeOutcomeCriterion != null);
+			int patientCount = pathlingClient.getPatientCount();
 
-		// A. Count patients WITH treatment, WITH negative outcome
-		List<EncounterCriterion> encounterCriteria = patientCriteria.getEncounterCriteria();
-		encounterCriteria.add(treatmentCriterion);
-		encounterCriteria.add(negativeOutcomeCriterion);
-		int withTreatmentWithNegativeOutcomeCount = queryService.fetchCohortCount(patientCriteria);
+			AggregateResponse aggregateResponse = pathlingClient.aggregate(new AggregateRequest("Patient")
+					.addAggregation("Number of patients", "count()")
 
-		// B. Count patients WITH treatment
-		removeLast(encounterCriteria);
-		int withTreatmentCount = queryService.fetchCohortCount(patientCriteria);
+					// Treatment
+					.addGrouping("Prescribed TNF inhibitor", "reverseResolve(MedicationRequest.subject).medicationCodeableConcept.coding contains http://snomed.info/sct|416897008")
+					// Negative outcome
+					.addGrouping("Contracted lung infection", "reverseResolve(Condition.subject).code.memberOf('http://snomed.info/sct?fhir_vs=ecl/<<53084003') contains true")
 
-		// Has test variable chance of outcome = A / B
+					// COPD
+					.addFilter("reverseResolve(Condition.subject).code.memberOf('http://snomed.info/sct?fhir_vs=ecl/<<13645005') contains true")
+					// RA
+					.addFilter("reverseResolve(Condition.subject).code.memberOf('http://snomed.info/sct?fhir_vs=ecl/<<69896004') contains true")
+			);
 
-		// C. Count patients WITHOUT treatment, WITH negative outcome
-		treatmentCriterion.setHas(false);
-		encounterCriteria.add(negativeOutcomeCriterion);
-		int withoutTreatmentWithNegativeOutcomeCount = queryService.fetchCohortCount(patientCriteria);
+			int withTreatmentWithNegativeOutcomeCount = aggregateResponse.getGroupingCount(true, true);
+			int withTreatmentWithoutNegativeOutcomeCount = aggregateResponse.getGroupingCount(true, false);
+			int withTreatmentCount = withTreatmentWithNegativeOutcomeCount + withTreatmentWithoutNegativeOutcomeCount;
 
-		// D. Count patients WITHOUT test variable
-		removeLast(encounterCriteria);
-		int withoutTreatmentCount = queryService.fetchCohortCount(patientCriteria);
-		treatmentCriterion.setHas(true);// reset
+			int withoutTreatmentWithNegativeOutcomeCount = aggregateResponse.getGroupingCount(false, true);
+			int withoutTreatmentWithoutNegativeOutcomeCount = aggregateResponse.getGroupingCount(false, false);
+			int withoutTreatmentCount = withoutTreatmentWithNegativeOutcomeCount + withoutTreatmentWithoutNegativeOutcomeCount;
 
-		// Has not test variable chance of outcome = C / D
+			return new StatisticalCorrelationReport(
+					patientCount,
+					withTreatmentCount,
+					withTreatmentWithNegativeOutcomeCount,
+					withoutTreatmentCount,
+					withoutTreatmentWithNegativeOutcomeCount);
 
-		return new StatisticalCorrelationReport(
-				(int) queryService.getStats().getPatientCount(),
-				withTreatmentCount,
-				withTreatmentWithNegativeOutcomeCount,
-				withoutTreatmentCount,
-				withoutTreatmentWithNegativeOutcomeCount);
+		} else {
+			// Use Elasticsearch
+
+			CohortCriteria patientCriteria = new CohortCriteria();
+
+			// Copy base criteria
+			patientCriteria.copyCriteriaWhereMoreSpecific(reportDefinition.getBaseCriteria());
+
+			EncounterCriterion treatmentCriterion = reportDefinition.getTreatmentCriterion();
+			InputValidationHelper.checkInput("treatmentCriterion is required for the statistical test.", treatmentCriterion != null);
+			EncounterCriterion negativeOutcomeCriterion = reportDefinition.getNegativeOutcomeCriterion();
+			InputValidationHelper.checkInput("negativeOutcomeCriterion is required for a statistical test.", negativeOutcomeCriterion != null);
+
+			// A. Count patients WITH treatment, WITH negative outcome
+			List<EncounterCriterion> encounterCriteria = patientCriteria.getEncounterCriteria();
+			encounterCriteria.add(treatmentCriterion);
+			encounterCriteria.add(negativeOutcomeCriterion);
+			int withTreatmentWithNegativeOutcomeCount = queryService.fetchCohortCount(patientCriteria);
+
+			// B. Count patients WITH treatment
+			removeLast(encounterCriteria);
+			int withTreatmentCount = queryService.fetchCohortCount(patientCriteria);
+
+			// Has test variable chance of outcome = A / B
+
+			// C. Count patients WITHOUT treatment, WITH negative outcome
+			treatmentCriterion.setHas(false);
+			encounterCriteria.add(negativeOutcomeCriterion);
+			int withoutTreatmentWithNegativeOutcomeCount = queryService.fetchCohortCount(patientCriteria);
+
+			// D. Count patients WITHOUT test variable
+			removeLast(encounterCriteria);
+			int withoutTreatmentCount = queryService.fetchCohortCount(patientCriteria);
+			treatmentCriterion.setHas(true);// reset
+
+			// Has not test variable chance of outcome = C / D
+
+			return new StatisticalCorrelationReport(
+					(int) queryService.getStats().getPatientCount(),
+					withTreatmentCount,
+					withTreatmentWithNegativeOutcomeCount,
+					withoutTreatmentCount,
+					withoutTreatmentWithNegativeOutcomeCount);
+		}
 	}
 
 	private void addReportGroups(Report report, List<List<SubReportDefinition>> groupLists, int listsIndex, CohortCriteria patientCriteria, Timer timer) throws ServiceException {
