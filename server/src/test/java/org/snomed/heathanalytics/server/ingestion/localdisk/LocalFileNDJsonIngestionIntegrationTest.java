@@ -2,26 +2,22 @@ package org.snomed.heathanalytics.server.ingestion.localdisk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.Test;
-import java.io.File;
-import java.util.*;
-
-import org.junit.runner.RunWith;
 import org.snomed.heathanalytics.model.ClinicalEncounter;
 import org.snomed.heathanalytics.model.Patient;
-import org.snomed.heathanalytics.server.TestConfig;
+import org.snomed.heathanalytics.server.AbstractDataTest;
 import org.snomed.heathanalytics.server.ingestion.elasticsearch.ElasticOutputStream;
 import org.snomed.heathanalytics.server.store.PatientRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
-import org.springframework.test.context.ContextConfiguration;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
-import static org.junit.Assert.*;
+import java.io.File;
+import java.util.*;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.snomed.heathanalytics.model.Gender.MALE;
 
-@RunWith(SpringJUnit4ClassRunner.class)
-@ContextConfiguration(classes = TestConfig.class)
-public class LocalFileNDJsonIngestionIntegrationTest {
+public class LocalFileNDJsonIngestionIntegrationTest extends AbstractDataTest {
 
 	@Autowired
 	private ObjectMapper objectMapper;
